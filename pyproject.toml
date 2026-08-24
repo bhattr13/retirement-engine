@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "retirement-engine"
+version = "0.1.0"
+description = "Shared tax-planning and retirement-simulation engine"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "numpy-financial",
+    "matplotlib",
+]
+
+[tool.setuptools]
+py-modules = ["tax_planning", "simulation", "RMD", "taxyear_2025", "mortgage_calculator"]
