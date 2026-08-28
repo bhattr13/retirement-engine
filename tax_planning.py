@@ -176,6 +176,7 @@ class TaxPlanning(object):
         self.year_brokerage_sales = 0
         self.year_savings_withdrawal = 0
         self.year_realized_gains = 0
+        self.year_state_realized_gains = 0
         self.year_pretax_income = 0
         self.SS_income       = 0
         self.year_dividend_income = 0
@@ -551,9 +552,11 @@ class TaxPlanning(object):
         ordinary_income = self.w2_income + self.pension_income + self.fixed_income + self.year_pretax_distributions +\
                           self.year_interest_income
         LTCG = self.year_realized_gains
+        state_LTCG = self.year_state_realized_gains
 
         if self.qual_div:
             LTCG += self.year_dividend_income
+            state_LTCG += self.year_dividend_income
         else:
             ordinary_income += self.year_dividend_income
 
@@ -571,15 +574,23 @@ class TaxPlanning(object):
         self.taxable_income = max(adj_ordinary_income - self.final_deduction, 0)
         self.taxable_LTCG = min(LTCG, max(self.AGI - self.final_deduction, 0))
 
-        # state
-        state_subtraction = (taxable_SS + self.state_nontaxable_int) if self.state_SS_exempt else self.state_nontaxable_int
+        # state -- computed from its own gross income (state_LTCG may differ from LTCG
+        # when sell_house() was given a different state basis than federal basis), not
+        # derived from federal AGI. When state_LTCG == LTCG this is numerically
+        # identical to deriving it from self.AGI.
+        state_gross_income = ordinary_income + state_LTCG
+        state_incomplete_AGI = state_gross_income - fed_adjustments
+        state_taxable_SS = self.calc_taxable_SS(state_incomplete_AGI)
+        state_AGI_before_subtraction = state_incomplete_AGI + state_taxable_SS
+
+        state_subtraction = (state_taxable_SS + self.state_nontaxable_int) if self.state_SS_exempt else self.state_nontaxable_int
         state_exemption_deduction = self.state_deduction
 
         if self.state == 'MD':
             state_subtraction += self.calc_pension_excl_MD(quiet=quiet)
             state_exemption_deduction += self.calc_exemptions_MD(quiet=quiet)
 
-        self.state_AGI = self.AGI - state_subtraction
+        self.state_AGI = state_AGI_before_subtraction - state_subtraction
         self.state_MAGI = self.state_AGI + self.pretax_contribution # true for state credit eligibility, but not for medical eligibility
 
         self.state_taxable_income = max(self.state_AGI - state_exemption_deduction, 0)
@@ -804,6 +815,7 @@ class TaxPlanning(object):
         self.brokerage_cost_basis -= principal_sales
         self.brokerage_funds -= amt
         self.year_realized_gains += (amt - principal_sales)
+        self.year_state_realized_gains += (amt - principal_sales)
         self.year_brokerage_sales += amt
         ### Maybe make sales/income separate -- differentiate rebalancing from living off portfolio
         self.year_total_income += amt
@@ -815,23 +827,43 @@ class TaxPlanning(object):
 
         self.calc_marginal_brackets(quiet=True)
 
-    def sell_house(self, purchase_price, sale_price, closing_cost_fact, loan_balance, primary=True, acct='brokerage'):
+    def sell_house(self, fed_basis, state_basis, sale_price, closing_cost_fact, loan_balance,
+                   primary=True, acct='brokerage', state_surviving_spouse_exclusion=False):
+        """Sell a property, realizing gain separately for federal and state purposes.
+
+        fed_basis/state_basis differ when the two jurisdictions recognize a
+        different cost-basis step-up on inherited/community property (e.g. a
+        registered domestic partner surviving a community-property co-owner may get
+        a full state-level step-up but only a 50% federal step-up). When they're
+        equal, this behaves exactly like a single shared basis.
+
+        state_surviving_spouse_exclusion widens the *state* primary-residence gain
+        exclusion to the joint-filer amount (e.g. for a state that treats the
+        seller as a surviving spouse within some window of a co-owner's death,
+        even though federal doesn't) -- the federal exclusion is unaffected by it.
+        """
         adj_sale_price = (1-closing_cost_fact)*sale_price
-        realized_gain = max(0.0, adj_sale_price - purchase_price)
+        fed_realized_gain = max(0.0, adj_sale_price - fed_basis)
+        state_realized_gain = max(0.0, adj_sale_price - state_basis)
 
         # taxable LTCG
-        taxable_realized_gain = realized_gain
+        fed_taxable_gain = fed_realized_gain
+        state_taxable_gain = state_realized_gain
         if primary:
-            taxable_realized_gain = min(self.home_gain_exclusion, realized_gain)
-        self.year_realized_gains += taxable_realized_gain
+            fed_taxable_gain = min(self.home_gain_exclusion, fed_realized_gain)
+            state_exclusion = self.y.home_sale_exclusion['MFJ'] if state_surviving_spouse_exclusion else self.home_gain_exclusion
+            state_taxable_gain = min(state_exclusion, state_realized_gain)
+        self.year_realized_gains += fed_taxable_gain
+        self.year_state_realized_gains += state_taxable_gain
 
-        # add profit to acct
+        # add profit to acct -- cash proceeds don't depend on basis, only sale price and loan payoff
         profit = adj_sale_price - loan_balance
         self.make_contribution(profit, acct=acct)
 
         if self.verbose:
             print('Sale profit: ${:,.2f}'.format(profit))
-            print('Realized gains: ${:,.2f}'.format(taxable_realized_gain))
+            print('Fed. realized gains: ${:,.2f}'.format(fed_taxable_gain))
+            print('{} realized gains: ${:,.2f}'.format(self.state, state_taxable_gain))
 
         self.calc_marginal_brackets(quiet=True)
 

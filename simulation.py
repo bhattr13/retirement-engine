@@ -213,9 +213,13 @@ class SimulationConfig:
     # docstring in tax_planning.py.
     infl_adjust_start: bool = False
 
-    # One-off property sale events. Each dict: {'year', 'purchase_price', 'sale_price',
-    # 'closing_cost_fact', 'loan_balance', 'primary', 'acct'}. tp.sell_house(...) is called
-    # with the matching entry's fields at the top of the iteration where results['age'] - age
+    # One-off property sale events. Each dict: {'year', 'fed_basis', 'state_basis',
+    # 'sale_price', 'closing_cost_fact', 'loan_balance', 'primary', 'acct',
+    # 'state_surviving_spouse_exclusion' (optional, default False)}. fed_basis/
+    # state_basis differ when federal and state recognize a different cost-basis
+    # step-up (e.g. inherited/community property); pass the same value for both if
+    # there's no such difference. tp.sell_house(...) is called with the matching
+    # entry's fields at the top of the iteration where results['age'] - age
     # == entry['year'] (i.e. loop index i == entry['year']).
     home_sales: List[dict] = dataclasses.field(default_factory=list)
 
@@ -394,8 +398,9 @@ def run_simulation(cfg: SimulationConfig) -> dict:
         for sale in cfg.home_sales:
             if sale['year'] == i:
                 tp.sell_house(
-                    sale['purchase_price'], sale['sale_price'], sale['closing_cost_fact'],
+                    sale['fed_basis'], sale['state_basis'], sale['sale_price'], sale['closing_cost_fact'],
                     sale['loan_balance'], primary=sale.get('primary', True), acct=sale.get('acct', 'brokerage'),
+                    state_surviving_spouse_exclusion=sale.get('state_surviving_spouse_exclusion', False),
                 )
 
         # 1. Meet income need
